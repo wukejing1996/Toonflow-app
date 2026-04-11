@@ -95,27 +95,62 @@ export function verifyLicense(
  * 许可证查找顺序：data/serve/license.lic → ./license.lic
  */
 export function verifyFromDisk(): { ok: boolean; reason?: string; payload?: LicensePayload } {
+  const log: any = { ts: new Date().toISOString(), step: 'verifyFromDisk', candidates: {} };
   try {
+    const serveDir = getPath("serve");
     const candidatesPub = [
-  path.join(getPath("serve"), "license_public.pem"),
-  path.join(process.resourcesPath || "", "data", "serve", "license_public.pem"),
-  path.resolve(process.cwd(), "license_public.pem"),
-  path.resolve(process.cwd(), "keys/public.pem"),
-];
+      path.join(serveDir, "license_public.pem"),
+      path.join(process.resourcesPath || "", "data", "serve", "license_public.pem"),
+      path.join((process as any).defaultApp ? process.cwd() : (process.resourcesPath || ""), "app.asar.unpacked", "data", "serve", "license_public.pem"),
+      path.resolve(process.cwd(), "license_public.pem"),
+      path.resolve(process.cwd(), "keys/public.pem"),
+    ];
     const candidatesLic = [
-  path.join(getPath("serve"), "license.lic"),
-  path.resolve(process.cwd(), "license.lic"),
-];
+      path.join(serveDir, "license.lic"),
+      path.resolve(process.cwd(), "license.lic"),
+    ];
+    log.candidates.pub = candidatesPub;
+    log.candidates.lic = candidatesLic;
 
     const pubPath = candidatesPub.find((p) => fs.existsSync(p));
-    if (!pubPath) return { ok: false, reason: "未找到公钥：license_public.pem" };
     const licPath = candidatesLic.find((p) => fs.existsSync(p));
-    if (!licPath) return { ok: false, reason: "未找到许可证：license.lic" };
+    log.found = { pubPath, licPath };
+
+    if (!pubPath) {
+      log.error = '未找到公钥: license_public.pem';
+      writeDebug(log);
+      return { ok: false, reason: "未找到公钥：license_public.pem" };
+    }
+    if (!licPath) {
+      log.error = '未找到许可证: license.lic';
+      writeDebug(log);
+      return { ok: false, reason: "未找到许可证：license.lic" };
+    }
 
     const publicKeyPem = fs.readFileSync(pubPath, "utf8");
     const lic: LicenseFile = JSON.parse(fs.readFileSync(licPath, "utf8"));
-    return verifyLicense(lic, publicKeyPem);
+    const st = verifyLicense(lic, publicKeyPem);
+    log.result = st;
+    writeDebug(log);
+    return st;
   } catch (e: any) {
+    log.exception = e?.message || String(e);
+    writeDebug(log);
     return { ok: false, reason: e?.message ?? "读取或验证许可证失败" };
   }
 }
+
+
+
+function writeDebug(data: any) {
+  try {
+    const dir = getPath('serve');
+    const logPath = path.join(dir, 'license_debug.log');
+    const line = JSON.stringify(data) + '\n';
+    fs.appendFileSync(logPath, line, { encoding: 'utf8' });
+  } catch {}
+}
+
+
+
+

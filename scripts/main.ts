@@ -4,13 +4,11 @@ import fs from "fs";
 import Module from "module";
 import { verifyFromDisk, getMachineId } from "@/utils/license";
 import getPath from "@/utils/getPath";
-
 // 优化 Electron 启动：关闭 GPU 着色器磁盘缓存，减少初始化时间
+const isDev = !!process.env.VITE_DEV || !app.isPackaged;
 app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");
 app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
-
 const TARGET_ENTRIES = new Set(["assets", "models", "serve", "skills", "web"]);
-
 function copyDir(src: string, dest: string): void {
   if (!fs.existsSync(src)) return;
   fs.mkdirSync(dest, { recursive: true });
@@ -20,9 +18,7 @@ function copyDir(src: string, dest: string): void {
     entry.isDirectory() ? copyDir(s, d) : fs.existsSync(d) || fs.copyFileSync(s, d);
   }
 }
-
 declare const __APP_VERSION__: string;
-
 function compareVersions(a: string, b: string): number {
   const pa = a
     .split(".")
@@ -41,12 +37,10 @@ function compareVersions(a: string, b: string): number {
   }
   return 0;
 }
-
 function initializeData(): void {
   const srcDir = path.join(process.resourcesPath, "data");
   const destDir = path.join(app.getPath("userData"), "data");
   const versionFilePath = path.join(destDir, "version.txt");
-
   let shouldForceReplace = false;
   if (!fs.existsSync(versionFilePath)) {
     shouldForceReplace = true;
@@ -56,7 +50,6 @@ function initializeData(): void {
       shouldForceReplace = true;
     }
   }
-
   for (const dir of TARGET_ENTRIES) {
     const targetDir = path.join(destDir, dir);
     if (shouldForceReplace) {
@@ -68,13 +61,11 @@ function initializeData(): void {
       copyDir(path.join(srcDir, dir), targetDir);
     }
   }
-
   if (shouldForceReplace) {
     fs.mkdirSync(destDir, { recursive: true });
     fs.writeFileSync(versionFilePath, `${__APP_VERSION__}\n`, "utf-8");
   }
 }
-
 // 获取依赖路径：优先从 unpacked 加载原生模块，其它从 asar 加载
 function getNodeModulesPaths(): string[] {
   const paths: string[] = [];
@@ -118,12 +109,10 @@ function requireWithCustomPaths(modulePath: string): any {
     (Module as any)._nodeModulePaths = originalNodeModulePaths;
   }
 }
-
 let mainWindow: BrowserWindow | null = null;
 let loadingWindow: BrowserWindow | null = null;
 let licenseWindow: BrowserWindow | null = null;
 let isAuthorized = false;
-
 const loadingHtml = `data:text/html;charset=utf-8,${encodeURIComponent(`<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -135,7 +124,6 @@ body{height:100vh;display:flex;flex-direction:column;align-items:center;justify-
 @keyframes spin{to{transform:rotate(360deg)}}
 p{margin-top:20px;font-size:14px;opacity:.6}
 </style></head><body><div class="spinner"></div><p>正在启动服务…</p></body></html>`)}`;
-
 function showLoading(): void {
   loadingWindow = new BrowserWindow({
     width: 1000,
@@ -163,15 +151,30 @@ function showLoading(): void {
   });
   void loadingWindow.loadURL(loadingHtml);
 }
-
 function closeLoading(): void {
   if (loadingWindow && !loadingWindow.isDestroyed()) {
     loadingWindow.close();
     loadingWindow = null;
   }
 }
-
-function createMainWindow(): Promise<void> {
+function resolvePreloadPath(): string | undefined {
+  try {
+    if (app.isPackaged) return path.join(__dirname, "preload.js");
+    const dev = path.join(process.cwd(), "build", "preload.js");
+    return fs.existsSync(dev) ? dev : undefined;
+  } catch { return undefined; }
+}
+let pageLoadedFlag = false;
+let uiReadyFlag = false;
+let pendingShowResolve: (() => void) | null = null;
+function tryShowMainWindow() {
+  if (mainWindow && pageLoadedFlag && uiReadyFlag) {
+    closeLoading();
+    mainWindow.show();
+    try { pendingShowResolve?.(); } catch {}
+    pendingShowResolve = null;
+  }
+}function createMainWindow(): Promise<void> {
   return new Promise((resolve) => {
     const win = new BrowserWindow({
       width: 1000,
@@ -183,22 +186,16 @@ function createMainWindow(): Promise<void> {
       autoHideMenuBar: true,
       resizable: true,
       thickFrame: true,
+      webPreferences: (() => { const p = resolvePreloadPath(); const wp = { contextIsolation: true, nodeIntegration: false, sandbox: false } as any; if (p) (wp as any).preload = p; return wp; })(),
     });
     mainWindow = win;
     win.setMenuBarVisibility(false);
     win.removeMenu();
-
-    win.on("closed", () => {
+        win.on("page-title-updated", (e) => { e.preventDefault(); try { win.setTitle("JulongAI"); } catch {} });win.on("closed", () => {
       mainWindow = null;
     });
-
-    win.once("ready-to-show", () => {
-      closeLoading();
-      win.show();
-      resolve();
-    });
-
-    const isDev = process.env.NODE_ENV === "dev" || !app.isPackaged;
+    win.once("ready-to-show", () => { pendingShowResolve = resolve; tryShowMainWindow(); });
+    win.webContents.on("did-finish-load", () => { pageLoadedFlag = true; tryShowMainWindow(); });
     if (process.env.VITE_DEV) {
       void win.loadURL("http://localhost:50188");
     } else {
@@ -209,10 +206,7 @@ function createMainWindow(): Promise<void> {
     }
   });
 }
-
 let closeServeFn: (() => Promise<void>) | undefined;
-
-
 // 许可校验 UI
 function createLicenseWindow(): void {
   if (licenseWindow && !licenseWindow.isDestroyed()) {
@@ -267,7 +261,6 @@ function createLicenseWindow(): void {
     autoHideMenuBar: true,
     title: '授权验证',
     backgroundColor: '#ffffff',
-
   });
   licenseWindow.on('closed', () => {
     licenseWindow = null;
@@ -275,11 +268,9 @@ function createLicenseWindow(): void {
   });
   void licenseWindow.loadURL(html);
 }
-
 function getServeDir(): string {
   return getPath(['serve']);
 }
-
 async function startBackend(): Promise<void> {
   if (app.isPackaged) {
     await new Promise((r) => setTimeout(r, 0));
@@ -298,7 +289,6 @@ async function startBackend(): Promise<void> {
   }
   await new Promise<void>((resolve) => setTimeout(resolve, 1200));
 }
-
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "toonflow",
@@ -309,26 +299,37 @@ protocol.registerSchemesAsPrivileged([
     },
   },
 ]);
-
 app.whenReady().then(async () => {
   // 立即显示 loading 窗口
   showLoading();
   try {
+    try { const fp = path.join(getServeDir(), "boot_debug.log"); fs.mkdirSync(getServeDir(), { recursive: true }); fs.appendFileSync(fp, JSON.stringify({ ts: new Date().toISOString(), step: "app.whenReady" })+"\n", { encoding: "utf8" }); } catch {}
     // 注册 toonflow 协议处理（包含窗口控制 + 许可相关）
-    protocol.handle("toonflow", (request) => {
+    protocol.handle("toonflow", (request) => { try { const fp = path.join(getServeDir(), "boot_debug.log"); fs.appendFileSync(fp, JSON.stringify({ ts: new Date().toISOString(), step: "protocol.handle" })+"\n", { encoding: "utf8" }); } catch {}
       const url = new URL(request.url);
       const pathname = url.hostname.toLowerCase();
       const handlers: Record<string, () => object> = {
+        opendevtool: () => { try { mainWindow?.webContents.openDevTools({ mode: "detach" }); } catch {} return { ok: true }; },
+        opendevtools: () => { try { mainWindow?.webContents.openDevTools({ mode: "detach" }); } catch {} return { ok: true }; },
         // —— 许可相关 ——
         machineid: () => ({ hwid: getMachineId() }),
         licensestatus: () => verifyFromDisk(),
         licensepick: () => {
           const dir = getServeDir();
           fs.mkdirSync(dir, { recursive: true });
-          const res = dialog.showOpenDialogSync({ properties: ["openFile"], filters: [{ name: "License", extensions: ["lic", "json"] }] });
+          const res = dialog.showOpenDialogSync({ properties: ["openFile"], filters: [{ name: "License", extensions: ["lic", "json", "pem"] }] });
           if (res && res[0]) {
             const to = path.join(dir, "license.lic");
             fs.copyFileSync(res[0], to);
+
+            try {
+              const pickedDir = path.dirname(res[0]);
+              const pubFromPicked = path.join(pickedDir, "license_public.pem");
+              const targetPub = path.join(dir, "license_public.pem");
+              if (!fs.existsSync(targetPub) && fs.existsSync(pubFromPicked)) {
+                fs.copyFileSync(pubFromPicked, targetPub);
+              }
+            } catch {}
             return { ok: true, path: to };
           }
           return { ok: false, canceled: true };
@@ -355,7 +356,8 @@ app.whenReady().then(async () => {
         windowclose: () => { app.exit(0); return { ok: true }; },
         apprestart: () => { setTimeout(() => { app.relaunch(); app.exit(0); }, 500); return { ok: true, message: '应用将重启' }; },
         windowismaximized: () => ({ maximized: mainWindow?.isMaximized() ?? false }),
-        opendevtool: () => { mainWindow?.webContents.openDevTools(); return { ok: true }; },
+        uiready: () => { uiReadyFlag = true; tryShowMainWindow(); return { ok: true }; },
+        uistate: () => { try { const url = new URL(request.url); const d = Object.fromEntries(url.searchParams.entries()); const fp = path.join(getServeDir(), "ui_debug.log"); fs.appendFileSync(fp, JSON.stringify({ ts: new Date().toISOString(), type: "uistate", data: d })+"\n", { encoding: "utf8" }); } catch {} return { ok: true }; },
         openurlwithbrowser: () => {
           const search = url.searchParams;
           const targetUrl = search.get('url');
@@ -367,10 +369,10 @@ app.whenReady().then(async () => {
       const responseData = handler ? handler() : { error: '未知接口' };
       return new Response(JSON.stringify(responseData), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
     });
-
     // —— 启动流程：先验证许可 ——
     const st = verifyFromDisk();
     if (st.ok) {
+      try { const fp = path.join(getServeDir(), "boot_debug.log"); fs.appendFileSync(fp, JSON.stringify({ ts: new Date().toISOString(), step: "startBackend" })+"\n", { encoding: "utf8" }); } catch {}
       await startBackend();
       isAuthorized = true;
       await createMainWindow();
@@ -383,26 +385,17 @@ app.whenReady().then(async () => {
     createLicenseWindow();
   }
 });
-
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
-
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createMainWindow();
   }
 });
-
 app.on("before-quit", async (event) => {
   if (closeServeFn) await closeServeFn();
 });
-
-
-
-
-
-
 
 
 
