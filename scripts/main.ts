@@ -1,9 +1,11 @@
-import { app, BrowserWindow, protocol } from "electron";
+﻿import { app, BrowserWindow, protocol, dialog, shell } from "electron";
 import path from "path";
 import fs from "fs";
 import Module from "module";
+import { verifyFromDisk, getMachineId } from "@/utils/license";
+import getPath from "@/utils/getPath";
 
-// 加速 Electron 启动：跳过 GPU 信息收集，减少初始化耗时
+// 优化 Electron 启动：关闭 GPU 着色器磁盘缓存，减少初始化时间
 app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");
 app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
 
@@ -73,16 +75,16 @@ function initializeData(): void {
   }
 }
 
-//获取全部依赖路径，优先从 unpacked 加载原生模块，其他模块从 asar 加载
+// 获取依赖路径：优先从 unpacked 加载原生模块，其它从 asar 加载
 function getNodeModulesPaths(): string[] {
   const paths: string[] = [];
   if (app.isPackaged) {
-    // external 依赖（原生模块）在 unpacked 目录
+    // 原生依赖（external native modules）位于 unpacked 目录
     const unpackedNodeModules = path.join(process.resourcesPath, "app.asar.unpacked", "node_modules");
     if (fs.existsSync(unpackedNodeModules)) {
       paths.push(unpackedNodeModules);
     }
-    // 普通依赖在 asar 内
+    // 常规依赖在 asar 内
     const asarNodeModules = path.join(process.resourcesPath, "app.asar", "node_modules");
     paths.push(asarNodeModules);
   } else {
@@ -90,16 +92,15 @@ function getNodeModulesPaths(): string[] {
   }
   return paths;
 }
-
-//动态加载
+// 动态调整模块加载路径：优先使用应用 node_modules
 function requireWithCustomPaths(modulePath: string): any {
   const appNodeModulesPaths = getNodeModulesPaths();
-  // 保存原始方法
+  // 记录原始实现
   const originalNodeModulePaths = (Module as any)._nodeModulePaths;
-  // 临时修改模块路径解析
+  // 临时覆盖模块路径解析
   (Module as any)._nodeModulePaths = function (from: string): string[] {
     const paths = originalNodeModulePaths.call(this, from);
-    // 将主程序的 node_modules 添加到前面
+    // 将主进程的 node_modules 提前到搜索路径前端
     for (let i = appNodeModulesPaths.length - 1; i >= 0; i--) {
       const p = appNodeModulesPaths[i];
       if (!paths.includes(p)) {
@@ -109,17 +110,19 @@ function requireWithCustomPaths(modulePath: string): any {
     return paths;
   };
   try {
-    // 清除缓存确保加载最新
+    // 清理 require 缓存，确保重新加载最新模块
     delete require.cache[require.resolve(modulePath)];
     return require(modulePath);
   } finally {
-    // 恢复原始方法
+    // 恢复原始实现
     (Module as any)._nodeModulePaths = originalNodeModulePaths;
   }
 }
 
 let mainWindow: BrowserWindow | null = null;
 let loadingWindow: BrowserWindow | null = null;
+let licenseWindow: BrowserWindow | null = null;
+let isAuthorized = false;
 
 const loadingHtml = `data:text/html;charset=utf-8,${encodeURIComponent(`<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
@@ -209,6 +212,93 @@ function createMainWindow(): Promise<void> {
 
 let closeServeFn: (() => Promise<void>) | undefined;
 
+
+// 许可校验 UI
+function createLicenseWindow(): void {
+  if (licenseWindow && !licenseWindow.isDestroyed()) {
+    licenseWindow.focus();
+    return;
+  }
+  const html = `data:text/html;charset=utf-8,${encodeURIComponent(
+    `<!DOCTYPE html>`+
+    `<html><head><meta charset="utf-8">`+
+    `<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data: toonflow:; connect-src toonflow:;">`+
+    `<title>授权验证</title>`+
+    `<style>`+
+    `*{box-sizing:border-box}body{margin:0;font:14px -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;background:#fff;color:#222}`+
+    `.wrap{max-width:720px;margin:0 auto;padding:24px}`+
+    `h1{font-size:20px;margin:0 0 12px} p{margin:8px 0}`+
+    `.box{border:1px solid #e5e5e5;border-radius:8px;padding:16px;background:#fafafa}`+
+    `.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}`+
+    `code{background:#f0f0f0;padding:4px 8px;border-radius:4px}`+
+    `button{padding:8px 12px;border:1px solid #d0d0d0;border-radius:6px;background:#fff;cursor:pointer}`+
+    `button.primary{background:#111;color:#fff;border-color:#111}`+
+    `button:disabled{opacity:.5;cursor:not-allowed}`+
+    `.muted{color:#666}`+
+    `</style></head><body>`+
+    `<div class="wrap">`+
+    `<h1>授权验证</h1>`+
+    `<div class="box">`+
+    `<p class="muted">请上传授权文件（license.lic）。如未获得授权，请复制下方机器码并发送给管理员。</p>`+
+    `<div class="row"><strong>机器码：</strong><code id="hwid">-</code><button id="copy">复制</button></div>`+
+    `<div class="row" style="margin-top:8px"><button id="pick">选择授权文件</button><button id="open">打开授权目录</button><button id="check">重新校验</button></div>`+
+    `<p id="status" class="muted">待校验…</p>`+
+    `<div class="row" style="margin-top:8px"><button id="launch" class="primary" disabled>进入应用</button></div>`+
+    `</div></div>`+
+    `<script>`+
+    `const $=(s)=>document.querySelector(s);`+
+    `async function call(name){ const r = await fetch('toonflow://'+name); return r.json(); }`+
+    `async function refresh(){ const st = await call('licensestatus'); const el=$('#status'); if(st.ok){ el.textContent='授权有效，到期时间：'+(st.payload?.exp||''); $('#launch').disabled=false; } else { el.textContent='未通过：'+(st.reason||'未知原因'); $('#launch').disabled=true; } }`+
+    `async function init(){ const id = await call('machineid'); $('#hwid').textContent=id.hwid||'-'; await refresh(); }`+
+    `$('#copy').onclick=()=>{ navigator.clipboard.writeText($('#hwid').textContent); };`+
+    `$('#pick').onclick=async()=>{ await call('licensepick'); await refresh(); };`+
+    `$('#open').onclick=()=>{ call('licenseopenfolder'); };`+
+    `$('#check').onclick=refresh;`+
+    `$('#launch').onclick=async()=>{ const r=await call('licenselaunch'); if(!r.ok) alert('仍未通过：'+(r.reason||'')); };`+
+    `init();`+
+    `</script>`+
+    `</body></html>`)}
+  `;
+  licenseWindow = new BrowserWindow({
+    width: 720,
+    height: 420,
+    resizable: false,
+    show: true,
+    autoHideMenuBar: true,
+    title: '授权验证',
+    backgroundColor: '#ffffff',
+
+  });
+  licenseWindow.on('closed', () => {
+    licenseWindow = null;
+    if (!isAuthorized) app.exit(0);
+  });
+  void licenseWindow.loadURL(html);
+}
+
+function getServeDir(): string {
+  return getPath(['serve']);
+}
+
+async function startBackend(): Promise<void> {
+  if (app.isPackaged) {
+    await new Promise((r) => setTimeout(r, 0));
+    initializeData();
+    const serverPath = path.join(getServeDir(), 'app.js');
+    const mod = requireWithCustomPaths(serverPath);
+    closeServeFn = mod.closeServe;
+    const port: number | string = await mod.default(true);
+    process.env.PORT = String(port);
+  } else {
+    const serverPath = path.join(process.cwd(), 'src', 'app.ts');
+    const mod = requireWithCustomPaths(serverPath);
+    closeServeFn = mod.closeServe;
+    const port: number | string = await mod.default(true);
+    process.env.PORT = String(port);
+  }
+  await new Promise<void>((resolve) => setTimeout(resolve, 1200));
+}
+
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "toonflow",
@@ -221,94 +311,76 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 app.whenReady().then(async () => {
-  // 立即显示加载窗口（data URL + backgroundColor，瞬间可见）
+  // 立即显示 loading 窗口
   showLoading();
-
   try {
-    let servePath: string;
-    if (app.isPackaged) {
-      // 生产环境：让出主线程一次，确保 loading 窗口渲染后再做耗时文件拷贝
-      await new Promise((r) => setTimeout(r, 0));
-      initializeData();
-      servePath = path.join(app.getPath("userData"), "data", "serve", "app.js");
-    } else {
-      // 开发环境：直接加载源码（tsx 通过 -r tsx 注册了 require 钩子）
-      servePath = path.join(process.cwd(), "src", "app.ts");
-    }
-    // 使用自定义路径加载模块
-    const mod = requireWithCustomPaths(servePath);
-    closeServeFn = mod.closeServe;
-    const port = await mod.default(true);
-    process.env.PORT = port;
-    await new Promise<void>((resolve, reject) => {
-      setTimeout(() => {
-        resolve();
-      }, 2000);
-    });
-    // 注册协议处理器
+    // 注册 toonflow 协议处理（包含窗口控制 + 许可相关）
     protocol.handle("toonflow", (request) => {
       const url = new URL(request.url);
       const pathname = url.hostname.toLowerCase();
       const handlers: Record<string, () => object> = {
-        getappurl: () => ({ url: process.env.URL ?? `http://localhost:${port}/api` }),
-        windowminimize: () => {
-          mainWindow?.minimize();
-          return { ok: true };
-        },
-        windowmaximize: () => {
-          if (mainWindow?.isMaximized()) {
-            mainWindow.unmaximize();
-          } else {
-            mainWindow?.maximize();
+        // —— 许可相关 ——
+        machineid: () => ({ hwid: getMachineId() }),
+        licensestatus: () => verifyFromDisk(),
+        licensepick: () => {
+          const dir = getServeDir();
+          fs.mkdirSync(dir, { recursive: true });
+          const res = dialog.showOpenDialogSync({ properties: ["openFile"], filters: [{ name: "License", extensions: ["lic", "json"] }] });
+          if (res && res[0]) {
+            const to = path.join(dir, "license.lic");
+            fs.copyFileSync(res[0], to);
+            return { ok: true, path: to };
           }
+          return { ok: false, canceled: true };
+        },
+        licenseopenfolder: () => { fs.mkdirSync(getServeDir(), { recursive: true }); shell.openPath(getServeDir());
           return { ok: true };
         },
-        windowclose: () => {
-          app.exit(0);
+        licenselaunch: () => {
+          const st2 = verifyFromDisk();
+          if (!st2.ok) return st2;
+          isAuthorized = true;
+          startBackend()
+            .then(() => {
+              if (licenseWindow && !licenseWindow.isDestroyed()) licenseWindow.close();
+              void createMainWindow();
+            })
+            .catch((e) => { console.error('[backend start failed]', e); });
           return { ok: true };
         },
-        apprestart: () => {
-          // 延迟执行，让响应先返回给前端
-          setTimeout(() => {
-            app.relaunch();
-            app.exit(0);
-          }, 500);
-          return { ok: true, message: "应用即将重启" };
-        },
-        windowismaximized: () => ({
-          maximized: mainWindow?.isMaximized() ?? false,
-        }),
-        opendevtool: () => {
-          mainWindow?.webContents.openDevTools();
-          return { ok: true };
-        },
+        // —— 窗口控制 ——
+        getappurl: () => ({ url: process.env.URL ?? (process.env.PORT ? `http://localhost:${process.env.PORT}/api` : "") }),
+        windowminimize: () => { mainWindow?.minimize(); return { ok: true }; },
+        windowmaximize: () => { if (mainWindow?.isMaximized()) { mainWindow.unmaximize(); } else { mainWindow?.maximize(); } return { ok: true }; },
+        windowclose: () => { app.exit(0); return { ok: true }; },
+        apprestart: () => { setTimeout(() => { app.relaunch(); app.exit(0); }, 500); return { ok: true, message: '应用将重启' }; },
+        windowismaximized: () => ({ maximized: mainWindow?.isMaximized() ?? false }),
+        opendevtool: () => { mainWindow?.webContents.openDevTools(); return { ok: true }; },
         openurlwithbrowser: () => {
           const search = url.searchParams;
-          const targetUrl = search.get("url");
-          if (targetUrl) {
-            const { shell } = require("electron");
-            shell.openExternal(targetUrl);
-            return { ok: true };
-          } else {
-            return { ok: false, error: "缺少url参数" };
-          }
+          const targetUrl = search.get('url');
+          if (targetUrl) { shell.openExternal(targetUrl); return { ok: true }; }
+          return { ok: false, error: '缺少url参数' };
         },
       };
       const handler = handlers[pathname];
-      const responseData = handler ? handler() : { error: "未知接口" };
-      return new Response(JSON.stringify(responseData), {
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-store",
-        },
-      });
+      const responseData = handler ? handler() : { error: '未知接口' };
+      return new Response(JSON.stringify(responseData), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
     });
 
-    // 服务启动成功，创建主窗口（主窗口 ready-to-show 时自动关闭loading）
-    await createMainWindow();
+    // —— 启动流程：先验证许可 ——
+    const st = verifyFromDisk();
+    if (st.ok) {
+      await startBackend();
+      isAuthorized = true;
+      await createMainWindow();
+    } else {
+      closeLoading();
+      createLicenseWindow();
+    }
   } catch (err) {
-    console.error("[服务启动失败]:", err);
-    await createMainWindow();
+    console.error('[服务启动失败]:', err);
+    createLicenseWindow();
   }
 });
 
@@ -325,3 +397,19 @@ app.on("activate", () => {
 app.on("before-quit", async (event) => {
   if (closeServeFn) await closeServeFn();
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

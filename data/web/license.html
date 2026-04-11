@@ -1,0 +1,69 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>设置 - 授权</title>
+<style>
+  body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial; margin:0; padding:20px; color:#222}
+  h1{font-size:18px;margin:0 0 12px}
+  .card{border:1px solid #e5e5e5;border-radius:8px;padding:16px;margin-bottom:16px;background:#fff}
+  .row{display:flex;align-items:center;margin:8px 0}
+  .row label{width:96px;color:#666}
+  .row span{flex:1}
+  .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px}
+  .ok{background:#e6fffb;color:#006d75;border:1px solid #87e8de}
+  .err{background:#fff2f0;color:#a8071a;border:1px solid #ffa39e}
+  button{padding:8px 12px;border:1px solid #d9d9d9;border-radius:6px;background:#fafafa;cursor:pointer}
+  button.primary{background:#1677ff;border-color:#1677ff;color:#fff}
+  .actions{display:flex;gap:8px}
+  .muted{color:#888;font-size:12px}
+  code{background:#f6f6f6;padding:2px 4px;border-radius:4px}
+</style>
+</head>
+<body>
+  <h1>设置 - 授权</h1>
+  <div class="card">
+    <div class="row"><label>状态</label><span id="status"><span class="badge err">未检测</span></span></div>
+    <div class="row"><label>到期时间</label><span id="exp" class="muted">—</span></div>
+    <div class="row"><label>授权对象</label><span id="sub" class="muted">—</span></div>
+    <div class="row"><label>版本</label><span id="ver" class="muted">—</span></div>
+    <div class="row"><label>功能</label><span id="features" class="muted">—</span></div>
+  </div>
+  <div class="card">
+    <div class="row"><label>本机机器码</label><span id="hwid">—</span></div>
+    <div class="actions">
+      <button id="btnCopy">复制机器码</button>
+      <button id="btnImport" class="primary">导入授权文件</button>
+      <button id="btnClose">关闭</button>
+    </div>
+    <div class="muted" style="margin-top:8px">将机器码发送给运营方以生成授权；收到 <code>.lic</code> 后点击“导入授权文件”。</div>
+  </div>
+<script>
+async function api(name){ const r = await fetch(`julongai://${name}`); return r.json(); }
+function fmt(t){ if(!t) return '—'; try{ return new Date(t).toLocaleString(); }catch{return t} }
+async function refresh(){
+  const info = await api('getlicenseinfo');
+  const s = document.getElementById('status');
+  if(info.ok){ s.innerHTML = '<span class="badge ok">有效</span>'; } else { s.innerHTML = '<span class="badge err">'+(info.reason||'无效')+'</span>'; }
+  document.getElementById('exp').textContent = info.payload?.exp ? fmt(info.payload.exp) : '—';
+  document.getElementById('sub').textContent = info.payload?.sub || '—';
+  document.getElementById('ver').textContent = info.payload?.ver ?? '—';
+  document.getElementById('features').textContent = info.payload?.features ? JSON.stringify(info.payload.features) : '—';
+  const mid = await api('getmachineid');
+  document.getElementById('hwid').textContent = mid.id || '—';
+}
+
+(async () => {
+  await refresh();
+  document.getElementById('btnCopy').onclick = async () => {
+    const t = document.getElementById('hwid').textContent; await navigator.clipboard.writeText(t); alert('已复制');
+  };
+  document.getElementById('btnImport').onclick = async () => { const r = await api('promptimportlicense'); alert(r.ok ? '授权导入成功' : ('导入失败：'+(r.reason||''))); await refresh(); };
+  document.getElementById('btnClose').onclick = async () => { await api('licensewindowclose'); };
+})();
+</script>
+</body>
+</html>
+

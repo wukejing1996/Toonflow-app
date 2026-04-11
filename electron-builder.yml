@@ -1,5 +1,5 @@
-appId: net.toonflow.www
-productName: ToonFlow
+﻿appId: net.julongai.www
+productName: julongAI
 copyright: Copyright © 2026
 
 directories:
@@ -39,7 +39,6 @@ win:
     - target: nsis
       arch:
         - x64
-        - arm64
   icon: ./scripts/logo.ico
 
 nsis:
@@ -67,3 +66,4 @@ linux:
   category: Development
 
 publish: null
+

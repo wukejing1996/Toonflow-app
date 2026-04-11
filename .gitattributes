@@ -1,0 +1,15 @@
+﻿# Normalize line endings and prefer UTF-8 in working tree
+* text=auto eol=lf
+*.ts   text
+*.tsx  text
+*.js   text
+*.jsx  text
+*.html text
+*.css  text
+*.md   text
+*.json text
+*.yml  text
+*.yaml text
+
+# Enforce UTF-8 for text sources
+*.{ts,tsx,js,jsx,md,html,css,json,yml,yaml} text eol=lf working-tree-encoding=UTF-8

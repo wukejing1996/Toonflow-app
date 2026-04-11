@@ -140,6 +140,8 @@ import route136 from "./routes/task/getTaskCategories";
 import route137 from "./routes/task/taskDetails";
 import route138 from "./routes/test/test";
 
+import route139 from "./routes/license/hwid";
+import route140 from "./routes/license/status";
 export default async (app: Express) => {
   app.use("/api/agents/clearMemory", route1);
   app.use("/api/agents/getMemory", route2);
@@ -279,4 +281,5 @@ export default async (app: Express) => {
   app.use("/api/task/getTaskCategories", route136);
   app.use("/api/task/taskDetails", route137);
   app.use("/api/test/test", route138);
-}
+  app.use("/api/license/hwid", route139);
+  app.use("/api/license/status", route140);}

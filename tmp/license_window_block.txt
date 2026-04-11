@@ -1,0 +1,11 @@
+﻿licenseWindow = new BrowserWindow({
+    width: 720,
+    height: 420,
+    resizable: false,
+    show: true,
+    autoHideMenuBar: true,
+    title: '授权验证',
+    backgroundColor: '#ffffff',
+    parent: loadingWindow ?? undefined,
+    modal: !!loadingWindow,
+  });

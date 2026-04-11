@@ -57,3 +57,8 @@ database.d.ts
 data/oss/*
 data/test.sqlite
 version.txt
+
+keys/*
+.gitignore
+# Windows reserved device name at repo root
+/CON
