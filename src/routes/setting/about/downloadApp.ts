@@ -16,33 +16,9 @@ export default router.post(
     version: z.string(),
   }),
   async (req, res) => {
-    const { reinstall, url, version } = req.body;
-    if (reinstall) {
-      res.status(200).send(success("请在浏览器中手动下载并安装最新版本"));
-    } else {
-      const rootDir = u.getPath(["temp"]);
-      fs.mkdirSync(rootDir, { recursive: true });
-      const zip = await axios.get(url, { responseType: "arraybuffer" }).then((res) => res.data);
-      fs.writeFileSync(`${rootDir}/latest.zip`, zip);
-      await compressing.zip.uncompress(`${rootDir}/latest.zip`, rootDir);
-      const tempServerPath = u.getPath(["temp", "serve"]);
-      if (fs.existsSync(tempServerPath)) {
-        fs.cpSync(tempServerPath, u.getPath(["serve"]), { recursive: true, force: true });
-      }
-      const webPath = u.getPath(["temp", "web"]);
-      if (fs.existsSync(webPath)) {
-        fs.cpSync(webPath, u.getPath(["web"]), { recursive: true, force: true });
-      }
-      const tempSkillsPath = u.getPath(["temp", "skills"]);
-      if (fs.existsSync(tempSkillsPath)) {
-        fs.cpSync(tempSkillsPath, u.getPath(["skills"]), { recursive: true, force: true });
-      }
-      const tempModelsPath = u.getPath(["temp", "models"]);
-      if (fs.existsSync(tempModelsPath)) {
-        fs.cpSync(tempModelsPath, u.getPath(["models"]), { recursive: true, force: true });
-      }
-      fs.rmSync(rootDir, { recursive: true, force: true });
-      res.status(200).send(success(`更新${version}成功，5秒后重启`));
-    }
+    // 永远不自动更新：对客户端保持“无感知”。
+    // 即使前端误调用该接口，也不会下载或覆盖任何文件。
+    void req.body;
+    return res.status(200).send(success("OK"));
   },
 );

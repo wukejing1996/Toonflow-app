@@ -2,6 +2,84 @@
   type UIState = { textCount: number; logoCount: number; updRemoved: number; ghRemoved: number };
   const LOGO_PATH = 'welcome_logo.png';
   const RE_TOONFLOW = /toonflow/gi;
+  const DARK_BG_CLASS = 'julongai-dark-bg';
+  const THEME_STYLE_ID = 'julongai-theme-fix-style';
+
+  function parseRgb(color: string): { r: number; g: number; b: number; a: number } | null {
+    const m = (color || '').match(/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\)/i);
+    if (!m) return null;
+    const r = Number(m[1]);
+    const g = Number(m[2]);
+    const b = Number(m[3]);
+    const a = m[4] == null ? 1 : Number(m[4]);
+    if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b) || !Number.isFinite(a)) return null;
+    return { r, g, b, a };
+  }
+
+  function luminance({ r, g, b }: { r: number; g: number; b: number }): number {
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  }
+
+  function getEffectiveBackgroundColor(): string {
+    try {
+      const bodyBg = getComputedStyle(document.body).backgroundColor;
+      const bodyRgb = parseRgb(bodyBg);
+      if (bodyRgb && bodyRgb.a > 0.01) return bodyBg;
+
+      const htmlBg = getComputedStyle(document.documentElement).backgroundColor;
+      const htmlRgb = parseRgb(htmlBg);
+      if (htmlRgb && htmlRgb.a > 0.01) return htmlBg;
+    } catch {}
+    return 'rgb(255,255,255)';
+  }
+
+  function ensureThemeFixStyle() {
+    try {
+      if (document.getElementById(THEME_STYLE_ID)) return;
+      const style = document.createElement('style');
+	      style.id = THEME_STYLE_ID;
+	      style.textContent = `
+	html.${DARK_BG_CLASS} body { color: #eaeaea !important; }
+html.${DARK_BG_CLASS} input, html.${DARK_BG_CLASS} textarea,
+html.${DARK_BG_CLASS} .t-input__inner, html.${DARK_BG_CLASS} .t-textarea__inner,
+html.${DARK_BG_CLASS} .n-input__input-el, html.${DARK_BG_CLASS} .n-base-selection-label input {
+  color: #ffffff !important;
+  caret-color: #ffffff !important;
+}
+html.${DARK_BG_CLASS} input::placeholder, html.${DARK_BG_CLASS} textarea::placeholder,
+html.${DARK_BG_CLASS} .t-input__inner::placeholder, html.${DARK_BG_CLASS} .t-textarea__inner::placeholder,
+html.${DARK_BG_CLASS} .n-input__input-el::placeholder {
+  color: rgba(255,255,255,.65) !important;
+}
+
+/* Force specific login elements to render as black text (even on dark background) */
+html.${DARK_BG_CLASS} .t-input__wrap input,
+html.${DARK_BG_CLASS} .t-input__wrap textarea {
+  color: #000000 !important;
+  caret-color: #000000 !important;
+}
+html.${DARK_BG_CLASS} .t-input__wrap input::placeholder,
+html.${DARK_BG_CLASS} .t-input__wrap textarea::placeholder {
+  color: rgba(0,0,0,.45) !important;
+}
+html.${DARK_BG_CLASS} .tips.c,
+html.${DARK_BG_CLASS} .tips.c * {
+  color: #000000 !important;
+}
+	`;
+	      (document.head || document.documentElement).appendChild(style);
+	    } catch {}
+	  }
+
+  function applyDarkBackgroundFix() {
+    try {
+      ensureThemeFixStyle();
+      const bg = getEffectiveBackgroundColor();
+      const rgb = parseRgb(bg);
+      const isDarkBg = !!(rgb && rgb.a > 0.01 && luminance(rgb) < 0.35);
+      document.documentElement.classList.toggle(DARK_BG_CLASS, isDarkBg);
+    } catch {}
+  }
 
   function replaceTextIn(node: Node) {
     let count = 0;
@@ -84,12 +162,37 @@
     return removed;
   }
 
+  function removeQrAndBillingBlocks(root = document) {
+    let removed = 0;
+    try {
+      const qr = root.querySelectorAll('.qrcodeBox');
+      for (const el of qr) {
+        try { el.remove(); removed++; } catch {}
+      }
+      const gh = root.querySelectorAll('.githubBox');
+      for (const el of gh) {
+        try { el.remove(); removed++; } catch {}
+      }
+      const bills = root.querySelectorAll('.i-icon.i-icon-bill.icon');
+      for (const icon of bills) {
+        try {
+          const container = (icon as Element).closest('div.item.c');
+          if (container) { container.remove(); removed++; }
+          else { (icon as Element).remove(); removed++; }
+        } catch {}
+      }
+    } catch {}
+    return removed;
+  }
+
   function applyAll(target = document) {
     const scope = target === document ? document.body : target;
     const textCount = scope ? replaceTextIn(scope) : 0;
     const logoCount = updateLogos(target);
     const updRemoved = removeUpdateMenu(target);
     const ghRemoved = removeGithubBlock(target);
+    removeQrAndBillingBlocks(target);
+    applyDarkBackgroundFix();
     return { textCount, logoCount, updRemoved, ghRemoved };
   }
 
@@ -141,11 +244,6 @@
     startObserver();
   }
 })();
-
-
-
-
-
 
 
 

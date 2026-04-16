@@ -1,9 +1,10 @@
-﻿import fs from "fs";
+import fs from "fs";
 import crypto from "crypto";
 import os from "os";
 import child_process from "child_process";
 import path from "path";
 import getPath from "@/utils/getPath";
+// Public key is loaded from a file bundled with the installer.
 
 export interface LicensePayload {
   sub?: string;
@@ -60,7 +61,7 @@ export function verifyLicense(
   publicKeyPem: string,
 ): { ok: boolean; reason?: string; payload?: LicensePayload } {
   try {
-    if (!license || typeof license !== "object") return { ok: false, reason: "许可证结构无效" };
+    if (!license || typeof license !== "object") return { ok: false, reason: "许可文件结构无效" };
     const { sig, ...payload } = license as any;
     if (!sig) return { ok: false, reason: "缺少签名(sig)" };
     if (!payload.exp) return { ok: false, reason: "缺少到期(exp)" };
@@ -81,7 +82,7 @@ export function verifyLicense(
     const signature = Buffer.from(sig, "base64");
     // 使用 ECDSA-P256 + SHA-256 验签
     const ok = crypto.verify("sha256", data, publicKeyPem, signature);
-    if (!ok) return { ok: false, reason: "签名验签失败" };
+    if (!ok) return { ok: false, reason: "签名验证失败" };
 
     return { ok: true, payload };
   } catch (e: any) {
@@ -90,9 +91,9 @@ export function verifyLicense(
 }
 
 /**
- * 从磁盘读取文件完成校验
- * 公钥查找顺序：data/serve/license_public.pem → ./license_public.pem → ./keys/public.pem
- * 许可证查找顺序：data/serve/license.lic → ./license.lic
+ * 从磁盘读取文件完成校验。
+ * 公钥查找顺序：data/serve/license_public.pem -> resources/data/serve/license_public.pem -> ./keys/public.pem
+ * 许可文件查找顺序：data/serve/license.lic -> ./license.lic
  */
 export function verifyFromDisk(): { ok: boolean; reason?: string; payload?: LicensePayload } {
   const log: any = { ts: new Date().toISOString(), step: 'verifyFromDisk', candidates: {} };
@@ -101,9 +102,7 @@ export function verifyFromDisk(): { ok: boolean; reason?: string; payload?: Lice
     const candidatesPub = [
       path.join(serveDir, "license_public.pem"),
       path.join(process.resourcesPath || "", "data", "serve", "license_public.pem"),
-      path.join((process as any).defaultApp ? process.cwd() : (process.resourcesPath || ""), "app.asar.unpacked", "data", "serve", "license_public.pem"),
-      path.resolve(process.cwd(), "license_public.pem"),
-      path.resolve(process.cwd(), "keys/public.pem"),
+      path.resolve(process.cwd(), "keys", "public.pem"),
     ];
     const candidatesLic = [
       path.join(serveDir, "license.lic"),
@@ -111,9 +110,9 @@ export function verifyFromDisk(): { ok: boolean; reason?: string; payload?: Lice
     ];
     log.candidates.pub = candidatesPub;
     log.candidates.lic = candidatesLic;
-
     const pubPath = candidatesPub.find((p) => fs.existsSync(p));
     const licPath = candidatesLic.find((p) => fs.existsSync(p));
+
     log.found = { pubPath, licPath };
 
     if (!pubPath) {
@@ -122,9 +121,9 @@ export function verifyFromDisk(): { ok: boolean; reason?: string; payload?: Lice
       return { ok: false, reason: "未找到公钥：license_public.pem" };
     }
     if (!licPath) {
-      log.error = '未找到许可证: license.lic';
+      log.error = '未找到许可文件: license.lic';
       writeDebug(log);
-      return { ok: false, reason: "未找到许可证：license.lic" };
+      return { ok: false, reason: "未找到许可文件：license.lic" };
     }
 
     const publicKeyPem = fs.readFileSync(pubPath, "utf8");
@@ -136,7 +135,7 @@ export function verifyFromDisk(): { ok: boolean; reason?: string; payload?: Lice
   } catch (e: any) {
     log.exception = e?.message || String(e);
     writeDebug(log);
-    return { ok: false, reason: e?.message ?? "读取或验证许可证失败" };
+    return { ok: false, reason: e?.message ?? "读取或验证许可文件失败" };
   }
 }
 
@@ -150,7 +149,3 @@ function writeDebug(data: any) {
     fs.appendFileSync(logPath, line, { encoding: 'utf8' });
   } catch {}
 }
-
-
-
-

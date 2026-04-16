@@ -36,7 +36,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 build/*
 
-data/serve/
+# Ignore generated runtime server bundle, but keep shared public key.
+data/serve/*
+!data/serve/license_public.pem
 
 upload/*
 uploads/*
@@ -59,6 +61,10 @@ data/test.sqlite
 version.txt
 
 keys/*
+
+# Generated license files (grouped by HWID)
+licenses/*
+!licenses/.gitkeep
 .gitignore
 # Windows reserved device name at repo root
 /CON

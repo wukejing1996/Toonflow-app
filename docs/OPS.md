@@ -1,83 +1,99 @@
-﻿# julongAI 运维手册（OPS）
+# OPS（授权与发放）
 
-本文说明如何打包、生成/续期授权、验证授权与常见排障。
+本文档用于说明 `julongAI` 的授权文件发放流程。
 
-- 签名方案：ECDSA P-256 + SHA-256
-- 许可证格式：JSON（规范化排序后签名），字段：`sub`、`exp`、`hwid`、`ver`、`features`、`sig`
-- 客户端放置：`<用户数据目录>/license.lic`（应用会引导导入）
-- 公钥位置（随包分发）：`data/serve/license_public.pem`
+目标：所有用户安装 **同一个安装包**（内置同一份公钥 `license_public.pem`），管理员根据每个用户的机器码（HWID）签发 `license.lic`，用户把 `license.lic` 放到指定目录后即可通过校验。
 
-## 1. 打包发布
+## 文件说明
 
-1) 确认公钥
-- 生成密钥对后，将 `keys/public.pem` 的内容复制到仓库的 `data/serve/license_public.pem`。
-- 注意：`license_public.pem` 必须是 ECDSA P-256 公钥（PEM，SPKI）。
+- `keys/private.pem`
+  - **管理员私钥**（用于签发授权）
+  - 绝对不能发给用户
+  - 建议只保存在管理员机器/安全介质中
 
-2) 构建与打包
-- 开发预览（可触发授权窗口导入）：
-  - `yarn dev:gui` 或 `yarn dev:gui-vite`
-- 构建服务与主进程：
-  - `yarn build`
-- 生成安装包：
-  - 全平台（当前平台可用目标）：`yarn dist`
-  - 指定平台：`yarn dist:win` / `yarn dist:mac` / `yarn dist:linux`
-- 产物位置：`dist/` 目录
+- `data/serve/license_public.pem`
+  - **公钥**（随安装包发布，所有用户共用同一份）
+  - 需要提交到仓库，保证打包时会被带进安装包
 
-## 2. 生成与发放授权
+- `license.lic`
+  - 用户授权文件（每个 HWID 不同/过期时间不同）
+  - 由管理员发给用户
 
-A. 生成密钥对（离线进行，妥善保管私钥）
+## 一次性初始化（管理员）
+
+1) 生成密钥对（只需要做一次）
+
 ```bash
-# 仅首次执行
-yarn licensegen gen-keypair --out keys
-# 生成 keys/private.pem 与 keys/public.pem
-# 将 keys/public.pem 复制到 data/serve/license_public.pem（构建前）
+yarn licensegen gen-keypair --out ./keys
 ```
 
-B. 获取客户机器码（可选绑定）
-- 客户端任意时刻按 `Ctrl + Shift + L` 打开“设置-授权”窗口，即可看到机器码；或在控制台执行：
-```js
-fetch('julongai://getmachineid').then(r => r.json())
-```
+生成：
 
-C. 签发许可证（.lic）
+- `keys/private.pem`（私钥，仅管理员保存）
+- `keys/public.pem`（公钥源文件）
+
+2) 同步公钥到应用资源目录（需要提交）
+
 ```bash
-# 不绑定机器
-yarn licensegen issue --priv keys/private.pem --out license.lic \
-  --sub "客户/订单" --exp 2027-12-31
-
-# 绑定机器
-yarn licensegen issue --priv keys/private.pem --out license.lic \
-  --sub "客户/订单" --exp 2027-12-31 --hwid <上一步机器码>
+yarn licensegen sync-public --pub ./keys/public.pem
 ```
-- 可选参数：`--features '{"pro":true}'`、`--ver 1`
-- 生成的 `license.lic` 发给客户；客户端在提示框导入，或在“设置-授权”页面点击“导入授权文件”。
 
-## 3. 续期（延期）与验证
+默认会写入：
 
-- 续期：保持 `--hwid` 不变，调整 `--exp` 为新的到期日，重新 `issue` 生成新 `.lic`。
-- 客户把新证覆盖导入后，状态会变为“有效”，到期时间更新。
-- 验证方式：
-  - 打开“设置-授权”页面（快捷键 `Ctrl + Shift + L`），查看“状态/到期时间/授权对象/功能”。
-  - 也可在 DevTools Console 查询：
-    ```js
-    fetch('julongai://getlicenseinfo').then(r=>r.json())
-    ```
+- `data/serve/license_public.pem`
 
-## 4. 运行时位置与排障
+确认该文件已被 Git 跟踪（不要放在 `.gitignore` 里）。
 
-- 授权文件存放：`app.getPath('userData')/license.lic`
-  - Windows：`%APPDATA%/julongAI/license.lic`
-  - macOS：`~/Library/Application Support/julongAI/license.lic`
-  - Linux：`~/.config/julongAI/license.lic`
-- 常见错误：
-  - “未找到授权文件”：尚未导入 `.lic`。
-  - “授权已到期”：重新签发，更新 `--exp`。
-  - “机器码不匹配”：检查是否绑定正确机器码或重新签发。
-  - “签名验签失败”：公钥不一致或文件被损坏；确认 `data/serve/license_public.pem` 与发行方私钥匹配。
+## 签发授权（管理员）
 
-## 5. 安全建议
+给某个机器码签发授权：
 
-- 私钥仅在离线安全环境保存与使用；不要提交到仓库，也不要放入客户端。
-- 公钥可以随包分发；如需轮换，更新 `data/serve/license_public.pem` 并重新打包。
-- 如需防时间回拨与更强对抗，可在后续版本启用“高水位线”与多点校验（可选）。
+```bash
+yarn licensegen issue \
+  --priv ./keys/private.pem \
+  --dir ./licenses \
+  --out license.lic \
+  --exp 2026-04-30 \
+  --hwid 35143508-49c3-4dcf-b6b4-95b3fae238d2
+```
+
+输出固定按 HWID 分目录存放：
+
+- `licenses/<hwid>/license.lic`
+
+把该 `license.lic` 发给对应用户即可。
+
+## 用户侧放置位置
+
+应用启动时会从以下位置查找授权文件（按顺序）：
+
+1) 用户数据目录：`<userData>/data/serve/license.lic`
+2) 开发调试兜底：`./license.lic`（仅开发环境建议）
+
+公钥文件会从以下位置查找（按顺序）：
+
+1) 用户数据目录：`<userData>/data/serve/license_public.pem`
+2) 安装包资源目录：`resources/data/serve/license_public.pem`
+3) 开发调试兜底：`./keys/public.pem`
+
+正常发版场景：安装包自带 `license_public.pem`，用户只需要放入 `license.lic`。
+
+## 常见问题
+
+### 1) 为什么需要 `private.pem` / `public.pem`？
+
+这是非对称签名方案：
+
+- 管理员使用 `private.pem` 对授权内容（到期时间、HWID 等）进行签名
+- 客户端只需要 `public.pem` 就能验证签名真伪
+
+因此：
+
+- **私钥必须保密**，泄露后任何人都能伪造授权
+- **公钥可以公开**，内置在安装包里用于验签
+
+### 2) 为什么所有用户可以共用一个安装包？
+
+因为安装包只包含公钥（用于验签），不包含私钥。
+不同用户的差异只体现在你发放给他们的 `license.lic`。
 

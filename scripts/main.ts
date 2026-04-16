@@ -1,4 +1,4 @@
-﻿import { app, BrowserWindow, protocol, dialog, shell } from "electron";
+import { app, BrowserWindow, protocol, dialog, shell } from "electron";
 import path from "path";
 import fs from "fs";
 import Module from "module";
@@ -9,6 +9,7 @@ const isDev = !!process.env.VITE_DEV || !app.isPackaged;
 app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");
 app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
 const TARGET_ENTRIES = new Set(["assets", "models", "serve", "skills", "web"]);
+const RUNTIME_ENTRIES = new Set(["logs", "oss", "temp"]);
 function copyDir(src: string, dest: string): void {
   if (!fs.existsSync(src)) return;
   fs.mkdirSync(dest, { recursive: true });
@@ -50,6 +51,7 @@ function initializeData(): void {
       shouldForceReplace = true;
     }
   }
+  fs.mkdirSync(destDir, { recursive: true });
   for (const dir of TARGET_ENTRIES) {
     const targetDir = path.join(destDir, dir);
     if (shouldForceReplace) {
@@ -57,12 +59,15 @@ function initializeData(): void {
       copyDir(path.join(srcDir, dir), targetDir);
       continue;
     }
-    if (!fs.existsSync(targetDir)) {
-      copyDir(path.join(srcDir, dir), targetDir);
-    }
+    // Ensure directory exists even if resources are missing.
+    fs.mkdirSync(targetDir, { recursive: true });
+    // Always copy missing files into existing directories.
+    copyDir(path.join(srcDir, dir), targetDir);
+  }
+  for (const dir of RUNTIME_ENTRIES) {
+    fs.mkdirSync(path.join(destDir, dir), { recursive: true });
   }
   if (shouldForceReplace) {
-    fs.mkdirSync(destDir, { recursive: true });
     fs.writeFileSync(versionFilePath, `${__APP_VERSION__}\n`, "utf-8");
   }
 }
@@ -303,6 +308,10 @@ app.whenReady().then(async () => {
   // 立即显示 loading 窗口
   showLoading();
   try {
+    if (app.isPackaged) {
+      // Ensure runtime data directories/files exist even before authorization.
+      initializeData();
+    }
     try { const fp = path.join(getServeDir(), "boot_debug.log"); fs.mkdirSync(getServeDir(), { recursive: true }); fs.appendFileSync(fp, JSON.stringify({ ts: new Date().toISOString(), step: "app.whenReady" })+"\n", { encoding: "utf8" }); } catch {}
     // 注册 toonflow 协议处理（包含窗口控制 + 许可相关）
     protocol.handle("toonflow", (request) => { try { const fp = path.join(getServeDir(), "boot_debug.log"); fs.appendFileSync(fp, JSON.stringify({ ts: new Date().toISOString(), step: "protocol.handle" })+"\n", { encoding: "utf8" }); } catch {}
@@ -323,12 +332,6 @@ app.whenReady().then(async () => {
             fs.copyFileSync(res[0], to);
 
             try {
-              const pickedDir = path.dirname(res[0]);
-              const pubFromPicked = path.join(pickedDir, "license_public.pem");
-              const targetPub = path.join(dir, "license_public.pem");
-              if (!fs.existsSync(targetPub) && fs.existsSync(pubFromPicked)) {
-                fs.copyFileSync(pubFromPicked, targetPub);
-              }
             } catch {}
             return { ok: true, path: to };
           }
@@ -396,11 +399,6 @@ app.on("activate", () => {
 app.on("before-quit", async (event) => {
   if (closeServeFn) await closeServeFn();
 });
-
-
-
-
-
 
 
 
