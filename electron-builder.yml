@@ -37,8 +37,6 @@ extraResources:
 win:
   target:
     - target: nsis
-      arch:
-        - x64
   icon: ./scripts/logo.ico
 
 nsis:
@@ -66,4 +64,3 @@ linux:
   category: Development
 
 publish: null
-

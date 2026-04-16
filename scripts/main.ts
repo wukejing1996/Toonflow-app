@@ -4,11 +4,11 @@ import fs from "fs";
 import Module from "module";
 import { verifyFromDisk, getMachineId } from "@/utils/license";
 import getPath from "@/utils/getPath";
-// 优化 Electron 启动：关闭 GPU 着色器磁盘缓存，减少初始化时间
+// 加速 Electron 启动：跳过 GPU 信息收集，减少初始化耗时
 const isDev = !!process.env.VITE_DEV || !app.isPackaged;
 app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");
 app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
-const TARGET_ENTRIES = new Set(["assets", "models", "serve", "skills", "web"]);
+const TARGET_ENTRIES = new Set(["assets", "models", "serve", "skills", "web", "vendor"]);
 const RUNTIME_ENTRIES = new Set(["logs", "oss", "temp"]);
 function copyDir(src: string, dest: string): void {
   if (!fs.existsSync(src)) return;
@@ -71,16 +71,16 @@ function initializeData(): void {
     fs.writeFileSync(versionFilePath, `${__APP_VERSION__}\n`, "utf-8");
   }
 }
-// 获取依赖路径：优先从 unpacked 加载原生模块，其它从 asar 加载
+//获取全部依赖路径，优先从 unpacked 加载原生模块，其他模块从 asar 加载
 function getNodeModulesPaths(): string[] {
   const paths: string[] = [];
   if (app.isPackaged) {
-    // 原生依赖（external native modules）位于 unpacked 目录
+    // external 依赖（原生模块）在 unpacked 目录
     const unpackedNodeModules = path.join(process.resourcesPath, "app.asar.unpacked", "node_modules");
     if (fs.existsSync(unpackedNodeModules)) {
       paths.push(unpackedNodeModules);
     }
-    // 常规依赖在 asar 内
+    // 普通依赖在 asar 内
     const asarNodeModules = path.join(process.resourcesPath, "app.asar", "node_modules");
     paths.push(asarNodeModules);
   } else {
@@ -88,15 +88,15 @@ function getNodeModulesPaths(): string[] {
   }
   return paths;
 }
-// 动态调整模块加载路径：优先使用应用 node_modules
+//动态加载
 function requireWithCustomPaths(modulePath: string): any {
   const appNodeModulesPaths = getNodeModulesPaths();
-  // 记录原始实现
+  // 保存原始方法
   const originalNodeModulePaths = (Module as any)._nodeModulePaths;
-  // 临时覆盖模块路径解析
+  // 临时修改模块路径解析
   (Module as any)._nodeModulePaths = function (from: string): string[] {
     const paths = originalNodeModulePaths.call(this, from);
-    // 将主进程的 node_modules 提前到搜索路径前端
+    // 将主程序的 node_modules 添加到前面
     for (let i = appNodeModulesPaths.length - 1; i >= 0; i--) {
       const p = appNodeModulesPaths[i];
       if (!paths.includes(p)) {
@@ -106,11 +106,11 @@ function requireWithCustomPaths(modulePath: string): any {
     return paths;
   };
   try {
-    // 清理 require 缓存，确保重新加载最新模块
+    // 清除缓存确保加载最新
     delete require.cache[require.resolve(modulePath)];
     return require(modulePath);
   } finally {
-    // 恢复原始实现
+    // 恢复原始方法
     (Module as any)._nodeModulePaths = originalNodeModulePaths;
   }
 }
@@ -399,7 +399,6 @@ app.on("activate", () => {
 app.on("before-quit", async (event) => {
   if (closeServeFn) await closeServeFn();
 });
-
 
 
 

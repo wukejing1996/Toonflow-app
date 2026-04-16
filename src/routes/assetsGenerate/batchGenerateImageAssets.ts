@@ -116,7 +116,7 @@ export default router.post("/", validateFields(requestSchema), async (req, res) 
         await aiImage.run(
           {
             prompt: userPrompt,
-            imageBase64: item.base64 ? [item.base64] : [],
+            referenceList: item.base64 ? [{ base64: item.base64, type: "image" }] : [],
             size: resolution,
             aspectRatio: "16:9",
           },
@@ -141,7 +141,7 @@ export default router.post("/", validateFields(requestSchema), async (req, res) 
             state: "已完成",
             filePath: imagePath,
             type: item.type,
-            model: model.split(":")[1],
+            model: model.split(/:(.+)/)[1],
             resolution,
           });
 

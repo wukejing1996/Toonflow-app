@@ -8,28 +8,43 @@ import expressWs from "express-ws";
 import logger from "morgan";
 import cors from "cors";
 import buildRoute from "@/core";
+import path from "path";
 import fs from "fs";
 import u from "@/utils";
 import jwt from "jsonwebtoken";
 import socketInit from "@/socket/index";
-import path from "path";
-
-declare const __APP_VERSION__: string;
-
-const APP_VERSION: string = (() => {
-  if (typeof __APP_VERSION__ !== "undefined") {
-    return __APP_VERSION__;
-  }
-  // 开发环境回退：从 package.json 读取
-  const pkgPath = path.resolve(process.cwd(), "package.json");
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-  return pkg.version;
-})();
+import { isEletron } from "@/utils/getPath";
 
 const app = express();
 const server = http.createServer(app);
 
+async function checkPermissions() {
+  if (!isEletron()) return true;
+  const userDataPath = u.getPath();
+  try {
+    fs.mkdirSync(userDataPath, { recursive: true });
+    const testFile = path.join(userDataPath, ".access_test");
+    fs.writeFileSync(testFile, "test");
+    fs.unlinkSync(testFile);
+  } catch (e) {
+    const { dialog, app } = require("electron");
+    const { response } = await dialog.showMessageBox({
+      type: "warning",
+      title: "权限不足",
+      message: "应用无法访问数据目录",
+      detail: `无法读写以下目录：\n${userDataPath}\n\n请联系管理员授予权限，或以管理员身份运行本程序。`,
+      buttons: ["确认退出"],
+      defaultId: 0,
+    });
+    if (response === 0) {
+      app.quit();
+    }
+  }
+}
+
 export default async function startServe(randomPort: Boolean = false) {
+  await checkPermissions();
+
   await u.writeVersion();
   const io = new Server(server, { cors: { origin: "*" } });
   socketInit(io);
@@ -49,7 +64,7 @@ export default async function startServe(randomPort: Boolean = false) {
     fs.mkdirSync(ossDir, { recursive: true });
   }
   console.log("文件目录:", ossDir);
-  app.use("/oss", express.static(ossDir));
+  app.use("/oss", express.static(ossDir, { acceptRanges: false }));
   // skills 静态资源
   const skillsDir = u.getPath("skills");
   if (!fs.existsSync(skillsDir)) {
@@ -62,7 +77,7 @@ export default async function startServe(randomPort: Boolean = false) {
     (req, res, next) => {
       /\.(jpe?g|png|gif|webp|svg|ico|bmp)$/i.test(req.path) ? next() : res.status(403).end();
     },
-    express.static(skillsDir),
+    express.static(skillsDir, { acceptRanges: false }),
   );
 
   // assets 静态资源
@@ -71,13 +86,13 @@ export default async function startServe(randomPort: Boolean = false) {
     fs.mkdirSync(assetsDir, { recursive: true });
   }
   console.log("文件目录:", assetsDir);
-  app.use("/assets", express.static(assetsDir));
+  app.use("/assets", express.static(assetsDir, { acceptRanges: false }));
 
   // data/web 静态网站
   const webDir = u.getPath("web");
   if (fs.existsSync(webDir)) {
     console.log("静态网站目录:", webDir);
-    app.use(express.static(webDir));
+    app.use(express.static(webDir, { acceptRanges: false }));
   } else {
     console.warn("静态网站目录不存在:", webDir);
   }

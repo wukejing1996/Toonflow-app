@@ -7,6 +7,9 @@ import axios from "axios";
 const router = express.Router();
 
 async function urlToBase64(imageUrl: string): Promise<string> {
+  if (imageUrl.startsWith("/oss/")) {
+    return await u.oss.getImageBase64(u.replaceUrl(imageUrl));
+  }
   const response = await axios.get(imageUrl, { responseType: "arraybuffer" });
   const contentType = response.headers["content-type"] || "image/png";
   const base64 = Buffer.from(response.data, "binary").toString("base64");
@@ -28,7 +31,13 @@ export default router.post(
     const imageClass = await u.Ai.Image(model).run(
       {
         prompt: prompt,
-        imageBase64: references && references.length ? await Promise.all(references.map((url: string) => urlToBase64(url))) : [],
+        referenceList: await (async () => {
+          const list: { type: "image"; base64: string }[] = [];
+          for (const url of references) {
+            list.push({ type: "image" as const, base64: await urlToBase64(url) });
+          }
+          return list;
+        })(),
         size: quality,
         aspectRatio: ratio,
       },

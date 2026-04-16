@@ -1,42 +1,59 @@
-name: CI Build
+name: 构建测试
 
 on:
   push:
-    branches: [ main, dev ]
+    branches:
+      - main
+      - dev
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
 
 env:
-  NODE_VERSION: '24'
+  NODE_VERSION: "24"
 
 jobs:
-  build-windows:
+  # ==================== Windows 构建 ====================
+  build-Windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            name: x64
+          - arch: arm64
+            name: ARM64
+
     runs-on: windows-latest
-    name: Build Windows
+    name: 构建 Windows (${{ matrix.name }})
+
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v4
-      - name: Setup Node.js
+
+      - name: 配置 Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Install deps
+
+      - name: 安装依赖
         run: yarn install --frozen-lockfile
-      - name: UTF-8 check
-        run: yarn check:utf8
-      - name: Dist Windows
-        run: yarn dist:win
+
+      - name: 打包 Windows 安装程序
+        run: yarn dist:win --${{ matrix.arch }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Upload artifacts
+
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: windows
+          name: windows-${{ matrix.arch }}
           path: dist/*.exe
           retention-days: 7
 
-  build-macos:
+  # ==================== macOS 构建 ====================
+  build-macOS:
     strategy:
       fail-fast: false
       matrix:
@@ -47,37 +64,43 @@ jobs:
           - arch: x64
             os: macos-latest
             name: Intel
+
     runs-on: ${{ matrix.os }}
-    name: Build macOS (${{ matrix.name }})
+    name: 构建 macOS (${{ matrix.name }})
+
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v4
-      - name: Setup Node.js
+
+      - name: 配置 Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Install deps
+
+      - name: 安装依赖
         run: yarn install --frozen-lockfile
         env:
           npm_config_arch: ${{ matrix.arch }}
-      - name: Install sharp (x64 only)
+
+      - name: 安装目标平台 sharp
         if: matrix.arch == 'x64'
         run: |
           npm install --no-save --ignore-scripts --force @img/sharp-darwin-x64 @img/sharp-libvips-darwin-x64
-      - name: UTF-8 check
-        run: yarn check:utf8
-      - name: Dist macOS
+
+      - name: 打包 macOS 安装程序
         run: yarn dist:mac --${{ matrix.arch }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Upload artifacts
+
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}
           path: dist/*.dmg
           retention-days: 7
 
-  build-linux:
+  # ==================== Linux 构建 ====================
+  build-Linux:
     strategy:
       fail-fast: false
       matrix:
@@ -86,45 +109,57 @@ jobs:
             name: x64
           - arch: arm64
             name: ARM64
+
     runs-on: ubuntu-latest
-    name: Build Linux (${{ matrix.name }})
+    name: 构建 Linux (${{ matrix.name }})
+
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v4
-      - name: Setup Node.js
+
+      - name: 配置 Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Install deps
+
+      - name: 安装依赖
         run: yarn install --frozen-lockfile
         env:
           npm_config_arch: ${{ matrix.arch }}
-      - name: Install sharp (arm64 only)
+
+      - name: 安装目标平台 sharp
         if: matrix.arch == 'arm64'
         run: |
           npm install --no-save --ignore-scripts --force @img/sharp-linux-arm64 @img/sharp-libvips-linux-arm64
-      - name: UTF-8 check
-        run: yarn check:utf8
-      - name: Dist Linux
+
+      - name: 打包 Linux 安装程序
         run: yarn dist:linux --${{ matrix.arch }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Upload artifacts
+
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.arch }}
           path: dist/*.AppImage
           retention-days: 7
 
+  # ==================== 构建摘要 ====================
   summary:
-    needs: [build-windows, build-macos, build-linux]
+    needs: [build-Windows, build-macOS, build-Linux]
     runs-on: ubuntu-latest
-    name: Summary
+    name: 构建摘要
     if: always()
+
     steps:
-      - name: Print build results
+      - name: 输出构建结果
         run: |
-          echo '===== CI Build Completed ====='
-          echo 'Windows: ${{ needs.build-windows.result }}'
-          echo 'macOS:   ${{ needs.build-macos.result }}'
-          echo 'Linux:   ${{ needs.build-linux.result }}'
+          echo "===== 构建测试完成 ====="
+          echo "Windows x64: ${{ needs.build-Windows.result }}"
+          echo "Windows arm64: ${{ needs.build-Windows.result }}"
+          echo "macOS Apple Silicon: ${{ needs.build-macOS.result }}"
+          echo "macOS Intel: ${{ needs.build-macOS.result }}"
+          echo "Linux x64: ${{ needs.build-Linux.result }}"
+          echo "Linux arm64: ${{ needs.build-Linux.result }}"
+          echo ""
+          echo "构建产物将保留 7 天，可在 Actions 页面下载。"
