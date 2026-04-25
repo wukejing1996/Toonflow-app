@@ -30,6 +30,7 @@ extraResources:
     to: data
     filter:
       - "**/*"
+      - "!tos.json"
       - "!db2.sqlite"
       - "!logs/**"
       - "!oss/**"

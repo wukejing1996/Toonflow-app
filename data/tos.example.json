@@ -1,0 +1,10 @@
+{
+  "endpoint": "tos-cn-beijing.volces.com",
+  "region": "cn-beijing",
+  "bucket": "your-bucket-name",
+  "accessKeyId": "AK...",
+  "secretAccessKey": "SK...",
+  "securityToken": "",
+  "keyPrefix": "julongAI",
+  "signedUrlExpires": 3600
+}

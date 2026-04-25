@@ -40,27 +40,25 @@
 	      style.id = THEME_STYLE_ID;
 	      style.textContent = `
 	html.${DARK_BG_CLASS} body { color: #eaeaea !important; }
-html.${DARK_BG_CLASS} input, html.${DARK_BG_CLASS} textarea,
+html.${DARK_BG_CLASS} input:not([type]),
+html.${DARK_BG_CLASS} input[type="text"],
+html.${DARK_BG_CLASS} input[type="search"],
+html.${DARK_BG_CLASS} input[type="password"],
+html.${DARK_BG_CLASS} input[type="email"],
+html.${DARK_BG_CLASS} input[type="number"],
+html.${DARK_BG_CLASS} input[type="tel"],
+html.${DARK_BG_CLASS} input[type="url"],
+html.${DARK_BG_CLASS} textarea,
 html.${DARK_BG_CLASS} .t-input__inner, html.${DARK_BG_CLASS} .t-textarea__inner,
-html.${DARK_BG_CLASS} .n-input__input-el, html.${DARK_BG_CLASS} .n-base-selection-label input {
+html.${DARK_BG_CLASS} .n-input__input-el, html.${DARK_BG_CLASS} .n-input__textarea-el, html.${DARK_BG_CLASS} .n-base-selection-label input {
   color: #ffffff !important;
   caret-color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
 }
 html.${DARK_BG_CLASS} input::placeholder, html.${DARK_BG_CLASS} textarea::placeholder,
 html.${DARK_BG_CLASS} .t-input__inner::placeholder, html.${DARK_BG_CLASS} .t-textarea__inner::placeholder,
-html.${DARK_BG_CLASS} .n-input__input-el::placeholder {
+html.${DARK_BG_CLASS} .n-input__input-el::placeholder, html.${DARK_BG_CLASS} .n-input__textarea-el::placeholder {
   color: rgba(255,255,255,.65) !important;
-}
-
-/* Force specific login elements to render as black text (even on dark background) */
-html.${DARK_BG_CLASS} .t-input__wrap input,
-html.${DARK_BG_CLASS} .t-input__wrap textarea {
-  color: #000000 !important;
-  caret-color: #000000 !important;
-}
-html.${DARK_BG_CLASS} .t-input__wrap input::placeholder,
-html.${DARK_BG_CLASS} .t-input__wrap textarea::placeholder {
-  color: rgba(0,0,0,.45) !important;
 }
 html.${DARK_BG_CLASS} .tips.c,
 html.${DARK_BG_CLASS} .tips.c * {
@@ -70,6 +68,54 @@ html.${DARK_BG_CLASS} .tips.c * {
 	      (document.head || document.documentElement).appendChild(style);
 	    } catch {}
 	  }
+
+  function getEffectiveBackgroundColorFor(el: Element): string {
+    try {
+      let cur: Element | null = el;
+      // 向上查找有限层级的背景色，避免性能问题
+      for (let i = 0; i < 8 && cur; i++) {
+        const bg = getComputedStyle(cur).backgroundColor;
+        const rgb = parseRgb(bg);
+        if (rgb && rgb.a > 0.01) return bg;
+        cur = cur.parentElement;
+      }
+    } catch {}
+    return getEffectiveBackgroundColor();
+  }
+
+  function ensureInputsReadable(root: Document | ShadowRoot = document) {
+    try {
+      const els = Array.from((root as any).querySelectorAll('input, textarea')) as Array<HTMLInputElement | HTMLTextAreaElement>;
+      for (const el of els) {
+        try {
+          if (el instanceof HTMLInputElement) {
+            const t = (el.getAttribute('type') || '').toLowerCase();
+            if (t && ['hidden', 'button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color', 'file'].includes(t)) continue;
+          }
+
+          const cs = getComputedStyle(el);
+          const fg = parseRgb(cs.color);
+          if (!fg || fg.a <= 0.01) continue;
+
+          // 先用自身背景色；若透明则用父级有效背景色
+          const selfBg = parseRgb(cs.backgroundColor);
+          const bgStr = selfBg && selfBg.a > 0.01 ? cs.backgroundColor : getEffectiveBackgroundColorFor(el);
+          const bg = parseRgb(bgStr);
+          if (!bg || bg.a <= 0.01) continue;
+
+          // 简单亮度差判断：过低则强制修正文字颜色
+          const diff = Math.abs(luminance(fg) - luminance(bg));
+          if (diff >= 0.25) continue;
+
+          const useDarkText = luminance(bg) > 0.6;
+          const fixed = useDarkText ? '#111111' : '#ffffff';
+          el.style.setProperty('color', fixed, 'important');
+          el.style.setProperty('caret-color', fixed, 'important');
+          el.style.setProperty('-webkit-text-fill-color', fixed, 'important');
+        } catch {}
+      }
+    } catch {}
+  }
 
   function applyDarkBackgroundFix() {
     try {
@@ -193,6 +239,7 @@ html.${DARK_BG_CLASS} .tips.c * {
     const ghRemoved = removeGithubBlock(target);
     removeQrAndBillingBlocks(target);
     applyDarkBackgroundFix();
+    ensureInputsReadable(target as any);
     return { textCount, logoCount, updRemoved, ghRemoved };
   }
 
@@ -244,8 +291,6 @@ html.${DARK_BG_CLASS} .tips.c * {
     startObserver();
   }
 })();
-
-
 
 
 

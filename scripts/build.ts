@@ -2,6 +2,9 @@
 import fs from "fs";
 import path from "path";
 
+// Keep vendor snapshots in sync before bundling.
+import "./vendor2json";
+
 // 打包默认使用 prod 环境变量
 if (!process.env.NODE_ENV) {
   process.env.NODE_ENV = "prod";
@@ -67,7 +70,9 @@ const preloadBuildConfig: esbuild.BuildOptions = {
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
-};const mainBuildConfig: esbuild.BuildOptions = {
+};
+
+const mainBuildConfig: esbuild.BuildOptions = {
   entryPoints: ["scripts/main.ts"],
   bundle: true,
   minify: false,
@@ -102,5 +107,3 @@ const preloadBuildConfig: esbuild.BuildOptions = {
     process.exit(1);
   }
 })();
-
-

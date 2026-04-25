@@ -19,6 +19,14 @@ function copyDir(src: string, dest: string): void {
     entry.isDirectory() ? copyDir(s, d) : fs.existsSync(d) || fs.copyFileSync(s, d);
   }
 }
+
+function copyFileIfExists(src: string, dest: string, force = false): void {
+  if (!fs.existsSync(src)) return;
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  if (force || !fs.existsSync(dest)) {
+    fs.copyFileSync(src, dest);
+  }
+}
 declare const __APP_VERSION__: string;
 function compareVersions(a: string, b: string): number {
   const pa = a
@@ -67,6 +75,12 @@ function initializeData(): void {
   for (const dir of RUNTIME_ENTRIES) {
     fs.mkdirSync(path.join(destDir, dir), { recursive: true });
   }
+
+  // 固定同步：这些文件属于程序运行必需文件，不应依赖 version.txt 才更新。
+  copyFileIfExists(path.join(srcDir, "serve", "app.js"), path.join(destDir, "serve", "app.js"), true);
+  copyFileIfExists(path.join(srcDir, "serve", "license_public.pem"), path.join(destDir, "serve", "license_public.pem"));
+  // kfcv50 中转站脚本：确保修复（如 duration 类型）能落到已有安装目录。
+  copyFileIfExists(path.join(srcDir, "vendor", "kfcv50.ts"), path.join(destDir, "vendor", "kfcv50.ts"), true);
   if (shouldForceReplace) {
     fs.writeFileSync(versionFilePath, `${__APP_VERSION__}\n`, "utf-8");
   }
@@ -312,9 +326,8 @@ app.whenReady().then(async () => {
       // Ensure runtime data directories/files exist even before authorization.
       initializeData();
     }
-    try { const fp = path.join(getServeDir(), "boot_debug.log"); fs.mkdirSync(getServeDir(), { recursive: true }); fs.appendFileSync(fp, JSON.stringify({ ts: new Date().toISOString(), step: "app.whenReady" })+"\n", { encoding: "utf8" }); } catch {}
     // 注册 toonflow 协议处理（包含窗口控制 + 许可相关）
-    protocol.handle("toonflow", (request) => { try { const fp = path.join(getServeDir(), "boot_debug.log"); fs.appendFileSync(fp, JSON.stringify({ ts: new Date().toISOString(), step: "protocol.handle" })+"\n", { encoding: "utf8" }); } catch {}
+    protocol.handle("toonflow", (request) => {
       const url = new URL(request.url);
       const pathname = url.hostname.toLowerCase();
       const handlers: Record<string, () => object> = {
@@ -360,7 +373,7 @@ app.whenReady().then(async () => {
         apprestart: () => { setTimeout(() => { app.relaunch(); app.exit(0); }, 500); return { ok: true, message: '应用将重启' }; },
         windowismaximized: () => ({ maximized: mainWindow?.isMaximized() ?? false }),
         uiready: () => { uiReadyFlag = true; tryShowMainWindow(); return { ok: true }; },
-        uistate: () => { try { const url = new URL(request.url); const d = Object.fromEntries(url.searchParams.entries()); const fp = path.join(getServeDir(), "ui_debug.log"); fs.appendFileSync(fp, JSON.stringify({ ts: new Date().toISOString(), type: "uistate", data: d })+"\n", { encoding: "utf8" }); } catch {} return { ok: true }; },
+        uistate: () => ({ ok: true }),
         openurlwithbrowser: () => {
           const search = url.searchParams;
           const targetUrl = search.get('url');
@@ -375,7 +388,6 @@ app.whenReady().then(async () => {
     // —— 启动流程：先验证许可 ——
     const st = verifyFromDisk();
     if (st.ok) {
-      try { const fp = path.join(getServeDir(), "boot_debug.log"); fs.appendFileSync(fp, JSON.stringify({ ts: new Date().toISOString(), step: "startBackend" })+"\n", { encoding: "utf8" }); } catch {}
       await startBackend();
       isAuthorized = true;
       await createMainWindow();
@@ -399,7 +411,5 @@ app.on("activate", () => {
 app.on("before-quit", async (event) => {
   if (closeServeFn) await closeServeFn();
 });
-
-
 
 

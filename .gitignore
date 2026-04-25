@@ -60,6 +60,9 @@ data/oss/*
 data/test.sqlite
 version.txt
 
+# Local TOS config (contains secrets)
+data/tos.json
+
 keys/*
 
 # Generated license files (grouped by HWID)
